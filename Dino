@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>DINO</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@700&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:#111110;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    height:100dvh;
+    font-family:'JetBrains Mono',monospace;
+    overflow:hidden;
+    user-select:none;
+    -webkit-user-select:none;
+    touch-action:none;
+  }
+  #ui {
+    color:#c4732a;
+    font-size:12px;
+    letter-spacing:0.12em;
+    margin-bottom:10px;
+    font-weight:700;
+    display:flex;
+    gap:28px;
+  }
+  #ui span { color:#e8e4dc; }
+  canvas { display:block; }
+  #hint {
+    margin-top:12px;
+    color:#2e2c28;
+    font-size:10px;
+    letter-spacing:0.08em;
+    text-align:center;
+    line-height:2;
+  }
+  #hint b { color:#7a4a18; }
+</style>
+</head>
+<body>
+
+<div id="ui">SCORE <span id="sc">00000</span> &nbsp; HI <span id="hi">00000</span></div>
+<canvas id="c"></canvas>
+<div id="hint">SPACE / TAP · <b>JUMP</b> &nbsp;&nbsp; ↓ / SWIPE DOWN · <b>DUCK</b></div>
+
+<script>
+// ═══════════════════════════════════════════════
+//  SETUP
+// ═══════════════════════════════════════════════
+const cv  = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+const W  = Math.min(window.innerWidth - 20, 680);
+const H  = 160;
+cv.width  = W;
+cv.height = H;
+
+const GY   = H - 22;   // ground y
+const CW   = 8;        // cell width
+const CH   = 12;       // cell height
+const FONT = 'bold 11px "JetBrains Mono",monospace';
+
+const PAL = {
+  bg    : '#111110',
+  gnd   : '#252320',
+  dino  : '#e8e4dc',
+  cact  : '#c4732a',
+  bird  : '#8fb8c8',
+  cloud : '#1e1c1a',
+  dead  : '#c45a3a',
+  hi    : '#c4732a',
+};
+
+// ═══════════════════════════════════════════════
+//  LETTER-ART SHAPES  [col, row, char]
+// ═══════════════════════════════════════════════
+
+// ── Dino ──
+const SH_RUN_A = [                    // legs: stride A
+  [2,0,'R'],[3,0,'U'],[4,0,'N'],
+  [1,1,'('],[2,1,'o'],[3,1,')'],[4,1,'>'],
+  [0,2,'|'],[1,2,'['],[2,2,'='],[3,2,']'],
+  [1,3,'/'],[2,3,'|'],[3,3,'\\'],
+  [0,4,'/'],[4,4,'\\'],
+];
+const SH_RUN_B = [                    // legs: stride B
+  [2,0,'R'],[3,0,'U'],[4,0,'N'],
+  [1,1,'('],[2,1,'o'],[3,1,')'],[4,1,'>'],
+  [0,2,'|'],[1,2,'['],[2,2,'='],[3,2,']'],
+  [1,3,'L'],[2,3,'|'],[3,3,'J'],
+];
+const SH_DUCK = [                     // ducking
+  [1,0,'('],[2,0,'o'],[3,0,')'],[4,0,'>'],
+  [0,1,'~'],[1,1,'['],[2,1,'='],[3,1,'='],[4,1,']'],[5,1,'~'],
+  [1,2,'J'],[4,2,'L'],
+];
+const SH_DEAD = [                     // dead
+  [2,0,'X'],[3,0,'_'],[4,0,'X'],
+  [1,1,'('],[2,1,'x'],[3,1,')'],[4,1,'>'],
+  [0,2,'|'],[1,2,'['],[2,2,'='],[3,2,']'],
+  [1,3,'|'],[3,3,'|'],
+  [0,4,'/'],[4,4,'\\'],
+];
+
+// ── Cactus ──
+const SH_CACT_S = [
+  [1,0,'A'],
+  [0,1,'|'],[1,1,'|'],[2,1,'|'],
+  [0,2,'-'],[1,2,'+'],[2,2,'-'],
+  [1,3,'|'],[1,4,'|'],[1,5,'|'],
+];
+const SH_CACT_T = [
+  [1,0,'^'],
+  [0,1,'/'],[1,1,'|'],[2,1,'\\'],
+  [0,2,'|'],[1,2,'|'],[2,2,'|'],
+  [0,3,'-'],[1,3,'+'],[2,3,'-'],
+  [1,4,'|'],[1,5,'|'],[1,6,'|'],
+];
+const SH_CACT_D = [
+  [1,0,'A'],[4,0,'A'],
+  [0,1,'|'],[1,1,'|'],[2,1,'|'],[3,1,'|'],[4,1,'|'],[5,1,'|'],
+  [0,2,'-'],[1,2,'+'],[2,2,'-'],[3,2,'-'],[4,2,'+'],[5,2,'-'],
+  [1,3,'|'],[4,3,'|'],
+  [1,4,'|'],[4,4,'|'],
+  [1,5,'|'],[4,5,'|'],
+];
+
+// ── Bird ──
+const SH_BIRD_A = [
+  [0,0,'/'],[1,0,'^'],[2,0,'M'],[3,0,'^'],[4,0,'\\'],
+  [1,1,'('],[2,1,'>'],[3,1,')'],
+];
+const SH_BIRD_B = [
+  [0,0,'\\'],[1,0,'v'],[2,0,'W'],[3,0,'v'],[4,0,'/'],
+  [1,1,'('],[2,1,'>'],[3,1,')'],
+];
+
+// ── Cloud ──
+const SH_CLOUD = [
+  [1,0,'.'],[2,0,'-'],[3,0,'.'],
+  [0,1,'('],[1,1,'~'],[2,1,'~'],[3,1,'~'],[4,1,')'],
+];
+
+// ═══════════════════════════════════════════════
+//  DRAW HELPERS
+// ═══════════════════════════════════════════════
+function drawShape(sh, ax, ay, col) {
+  ctx.fillStyle = col;
+  ctx.font = FONT;
+  for (const [dc, dr, ch] of sh) {
+    ctx.fillText(ch, ax + dc * CW, ay + dr * CH);
+  }
+}
+
+const GSTR = '_-=._~-=.';
+function drawGround(off) {
+  ctx.fillStyle = PAL.gnd;
+  ctx.font = FONT;
+  const n   = Math.ceil(W / CW) + 2;
+  const idx = Math.floor(off / CW) % GSTR.length;
+  for (let i = 0; i < n; i++) {
+    ctx.fillText(GSTR[(i + idx) % GSTR.length], (i - 1) * CW, GY + 13);
+  }
+}
+
+function pad5(n) { return String(n).padStart(5, '0'); }
+function setUI() {
+  document.getElementById('sc').textContent = pad5(score);
+  document.getElementById('hi').textContent = pad5(hiScore);
+}
+
+// ═══════════════════════════════════════════════
+//  GAME STATE  (declared before init/loop)
+// ═══════════════════════════════════════════════
+let state, score, hiScore, speed, tick, gOff, spawnCD, cloudCD;
+let dino, obstacles, clouds;   // always arrays after init()
+
+function reset() {
+  state     = 'idle';
+  score     = 0;
+  hiScore   = parseInt(localStorage.getItem('dino_hi') || '0');
+  speed     = 4;
+  tick      = 0;
+  gOff      = 0;
+  spawnCD   = 65;
+  cloudCD   = 80;
+  obstacles = [];
+  clouds    = [];
+  dino = {
+    x        : 38,
+    y        : GY - 5 * CH,
+    vy       : 0,
+    grounded : true,
+    ducking  : false,
+    frame    : 0,
+  };
+  setUI();
+}
+
+// ═══════════════════════════════════════════════
+//  INPUT
+// ═══════════════════════════════════════════════
+function jump() {
+  if (state === 'dead') { reset(); state = 'run'; return; }
+  if (state === 'idle') { state = 'run'; return; }
+  if (dino.grounded && !dino.ducking) {
+    dino.vy = -12.8;
+    dino.grounded = false;
+  }
+}
+function duck(on) {
+  if (state === 'run') dino.ducking = on;
+}
+
+// ═══════════════════════════════════════════════
+//  SPAWN
+// ═══════════════════════════════════════════════
+function spawnObs() {
+  if (score > 500 && Math.random() < 0.30) {
+    const birdY = Math.random() < 0.5 ? GY - 3 * CH : GY - 6 * CH;
+    obstacles.push({ kind:'bird', x: W + 8, y: birdY, tf: 0 });
+  } else {
+    const pool  = score > 300 ? [SH_CACT_S, SH_CACT_T, SH_CACT_D]
+                               : [SH_CACT_S, SH_CACT_T];
+    const shape = pool[Math.floor(Math.random() * pool.length)];
+    obstacles.push({ kind:'cact', x: W + 8, y: GY - 6 * CH, shape });
+  }
+}
+
+// ═══════════════════════════════════════════════
+//  COLLISION
+// ═══════════════════════════════════════════════
+function dinoBox() {
+  return dino.ducking
+    ? { x: dino.x,       y: dino.y + CH,  w: 6 * CW, h: 2 * CH }
+    : { x: dino.x + CW,  y: dino.y,       w: 4 * CW, h: 5 * CH };
+}
+function obsBox(o) {
+  return o.kind === 'bird'
+    ? { x: o.x,       y: o.y,       w: 5 * CW, h: 2 * CH }
+    : { x: o.x + CW,  y: o.y + CH,  w: 3 * CW, h: 4 * CH };
+}
+function overlaps(a, b, p) {
+  p = p || 5;
+  return a.x + p < b.x + b.w - p &&
+         a.x + a.w - p > b.x + p &&
+         a.y + p < b.y + b.h - p &&
+         a.y + a.h - p > b.y + p;
+}
+
+// ═══════════════════════════════════════════════
+//  UPDATE
+// ═══════════════════════════════════════════════
+function update() {
+  if (state !== 'run') return;
+
+  tick++;
+  score++;
+  speed = 4 + score / 500;
+  gOff += speed;
+
+  // ── Dino physics ──
+  if (!dino.grounded) {
+    dino.vy += 0.65;
+    dino.y  += dino.vy;
+    const floor = GY - (dino.ducking ? 2 * CH : 5 * CH);
+    if (dino.y >= floor) {
+      dino.y = floor; dino.vy = 0; dino.grounded = true;
+    }
+  }
+  if (dino.ducking && dino.grounded) dino.y = GY - 2 * CH;
+  dino.frame++;
+
+  // ── Spawn obstacles ──
+  if (--spawnCD <= 0) {
+    spawnObs();
+    spawnCD = Math.max(30, Math.floor(52 + Math.random() * 52 - score / 200));
+  }
+
+  // ── Spawn clouds ──
+  if (--cloudCD <= 0) {
+    clouds.push({ x: W + 8, y: 10 + Math.random() * 40 });
+    cloudCD = 70 + Math.floor(Math.random() * 60);
+  }
+
+  // ── Move obstacles ──
+  for (const o of obstacles) {
+    o.x -= speed;
+    if (o.kind === 'bird') o.tf++;
+  }
+  obstacles = obstacles.filter(o => o.x > -80);
+
+  // ── Move clouds (parallax) ──
+  for (const c of clouds) c.x -= speed * 0.25;
+  clouds = clouds.filter(c => c.x > -60);
+
+  // ── Collision check ──
+  const db = dinoBox();
+  for (const o of obstacles) {
+    if (overlaps(db, obsBox(o))) {
+      state = 'dead';
+      if (score > hiScore) {
+        hiScore = score;
+        localStorage.setItem('dino_hi', hiScore);
+      }
+      setUI();
+      return;
+    }
+  }
+
+  setUI();
+}
+
+// ═══════════════════════════════════════════════
+//  DRAW
+// ═══════════════════════════════════════════════
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = PAL.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // clouds
+  for (const c of clouds) drawShape(SH_CLOUD, c.x, c.y, PAL.cloud);
+
+  // ground
+  drawGround(gOff);
+
+  // obstacles
+  for (const o of obstacles) {
+    if (o.kind === 'cact') {
+      drawShape(o.shape, o.x, o.y, PAL.cact);
+    } else {
+      const sh = o.tf % 24 < 12 ? SH_BIRD_A : SH_BIRD_B;
+      drawShape(sh, o.x, o.y, PAL.bird);
+    }
+  }
+
+  // dino
+  let sh;
+  if (state === 'dead') {
+    sh = SH_DEAD;
+  } else if (dino.ducking) {
+    sh = SH_DUCK;
+  } else {
+    const f = Math.floor(dino.frame / 8) % 2;
+    sh = dino.grounded ? (f ? SH_RUN_B : SH_RUN_A) : SH_RUN_A;
+  }
+  drawShape(sh, dino.x, dino.y, state === 'dead' ? PAL.dead : PAL.dino);
+
+  // overlay text
+  ctx.textAlign = 'center';
+  if (state === 'idle') {
+    ctx.fillStyle = '#5a5650';
+    ctx.font = 'bold 12px "JetBrains Mono",monospace';
+    ctx.fillText('TAP  TO  START', W / 2, H / 2 + 4);
+  }
+  if (state === 'dead') {
+    ctx.fillStyle = PAL.hi;
+    ctx.font = 'bold 13px "JetBrains Mono",monospace';
+    ctx.fillText('G A M E   O V E R', W / 2, H / 2 - 8);
+    ctx.fillStyle = '#3a3830';
+    ctx.font = '10px "JetBrains Mono",monospace';
+    ctx.fillText('tap or space to restart', W / 2, H / 2 + 10);
+  }
+  ctx.textAlign = 'left';
+}
+
+// ═══════════════════════════════════════════════
+//  LOOP  — started AFTER reset()
+// ═══════════════════════════════════════════════
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ═══════════════════════════════════════════════
+//  EVENTS
+// ═══════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp' || e.key === 'w') {
+    e.preventDefault(); jump();
+  }
+  if (e.code === 'ArrowDown' || e.key === 's') { e.preventDefault(); duck(true); }
+});
+document.addEventListener('keyup', e => {
+  if (e.code === 'ArrowDown' || e.key === 's') duck(false);
+});
+
+let touchStartY = 0;
+cv.addEventListener('touchstart', e => {
+  touchStartY = e.touches[0].clientY;
+  jump();
+  e.preventDefault();
+}, { passive: false });
+cv.addEventListener('touchmove', e => {
+  if (e.touches[0].clientY - touchStartY > 22) duck(true);
+  e.preventDefault();
+}, { passive: false });
+cv.addEventListener('touchend', e => {
+  duck(false);
+  e.preventDefault();
+}, { passive: false });
+cv.addEventListener('click', jump);
+
+// ═══════════════════════════════════════════════
+//  START — reset first, then loop
+// ═══════════════════════════════════════════════
+reset();
+loop();
+</script>
+</body>
+</html>
