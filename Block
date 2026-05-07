@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Block Blast</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&display=swap');
+
+  :root {
+    --bg:     #0f0f14;
+    --panel:  #16161e;
+    --border: #22222e;
+    --amber:  #e8923a;
+    --amber2: #f5a84a;
+    --text:   #e8e4dc;
+    --dim:    #5a5868;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+  html, body {
+    width:100%; height:100%;
+    overflow:hidden;
+    touch-action:none;
+    user-select:none;
+    -webkit-user-select:none;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Nunito', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+  }
+
+  /* top bar */
+  #topbar {
+    width:100%; max-width:420px;
+    display:flex; justify-content:space-between; align-items:center;
+    padding: 14px 20px 8px;
+    flex-shrink:0;
+  }
+  .sbox { display:flex; flex-direction:column; align-items:center; }
+  .slabel { font-size:10px; font-weight:700; letter-spacing:.14em; color:var(--dim); }
+  .sval   { font-size:26px; font-weight:900; color:var(--text); line-height:1; }
+  #ttl    { font-size:18px; font-weight:900; color:var(--amber); letter-spacing:.05em; }
+
+  /* board */
+  #board-wrap { position:relative; flex-shrink:0; }
+  #board      { display:block; border-radius:12px; touch-action:none; }
+
+  /* tray */
+  #tray {
+    display:flex; justify-content:center; align-items:center;
+    gap:14px; padding:14px 8px;
+    flex-shrink:0;
+  }
+  .slot {
+    width:96px; height:96px;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--panel);
+    border:1.5px solid var(--border);
+    border-radius:12px;
+    position:relative;
+    touch-action:none;
+  }
+  .slot canvas { display:block; pointer-events:none; }
+
+  /* floating drag piece */
+  #drag-canvas {
+    position:fixed;
+    pointer-events:none;
+    z-index:100;
+    display:none;
+    border-radius:6px;
+  }
+
+  /* overlay */
+  #overlay {
+    display:none; position:fixed; inset:0;
+    background:#0f0f14cc; backdrop-filter:blur(6px);
+    flex-direction:column; align-items:center; justify-content:center;
+    z-index:50; gap:16px;
+  }
+  #overlay.show { display:flex; }
+  #overlay h2   { font-size:32px; font-weight:900; color:var(--amber); letter-spacing:.06em; }
+  #overlay .fin { font-size:22px; font-weight:900; color:var(--text); }
+  #overlay p    { font-size:13px; font-weight:700; color:var(--dim); letter-spacing:.08em; }
+  #rbtn {
+    margin-top:8px; background:var(--amber); color:#0f0f14;
+    border:none; border-radius:14px; font-family:inherit;
+    font-size:15px; font-weight:900; padding:14px 40px; cursor:pointer;
+  }
+  #rbtn:active { background:var(--amber2); }
+
+  /* combo */
+  #combo {
+    position:fixed; top:28%; left:50%;
+    transform:translateX(-50%) scale(0);
+    font-size:28px; font-weight:900; color:var(--amber2);
+    text-shadow:0 0 20px #e8923a88;
+    pointer-events:none; z-index:60;
+    opacity:0; transition:transform .15s, opacity .3s;
+    white-space:nowrap;
+  }
+  #combo.show { transform:translateX(-50%) scale(1); opacity:1; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="sbox"><div class="slabel">SCORE</div><div class="sval" id="sc">0</div></div>
+  <div id="ttl">BLOCK BLAST</div>
+  <div class="sbox"><div class="slabel">BEST</div><div class="sval" id="hi">0</div></div>
+</div>
+
+<div id="board-wrap"><canvas id="board"></canvas></div>
+
+<div id="tray">
+  <div class="slot" id="s0"><canvas id="p0"></canvas></div>
+  <div class="slot" id="s1"><canvas id="p1"></canvas></div>
+  <div class="slot" id="s2"><canvas id="p2"></canvas></div>
+</div>
+
+<!-- floating piece that follows finger -->
+<canvas id="drag-canvas"></canvas>
+
+<div id="overlay">
+  <h2>GAME OVER</h2>
+  <div class="fin" id="fscore">0</div>
+  <p>TAP TO PLAY AGAIN</p>
+  <button id="rbtn" onclick="startGame()">RESTART</button>
+</div>
+<div id="combo"></div>
+
+<script>
+// ═══════════════════════════════════════
+//  CONSTANTS
+// ═══════════════════════════════════════
+const COLS = 8, ROWS = 8;
+const AVAIL = Math.min(window.innerWidth - 20, 380);
+const BS    = Math.floor(AVAIL / COLS);   // board cell size px
+const PAD   = 3, RAD = 6;
+
+const cv  = document.getElementById('board');
+const ctx = cv.getContext('2d');
+cv.width  = BS * COLS;
+cv.height = BS * ROWS;
+
+const dragCv  = document.getElementById('drag-canvas');
+const dragCtx = dragCv.getContext('2d');
+
+const COLORS = [null,'#e85d5d','#e8923a','#e8d53a','#5de87a','#3ab5e8','#a05de8','#e85dbe'];
+const DARK   = [null,'#a03030','#a05818','#a09018','#309050','#186898','#601898','#983080'];
+const LIGHT  = [null,'#ff9090','#ffb870','#fff070','#90ffaa','#80d8ff','#d090ff','#ff90dd'];
+
+const SHAPES = [
+  [[1]],
+  [[1,1]],
+  [[1],[1]],
+  [[1,1],[1,1]],
+  [[1,1,1]],
+  [[1],[1],[1]],
+  [[1,1,1],[1,1,1]],
+  [[1,1],[1,1],[1,1]],
+  [[1,1,1],[1,1,1],[1,1,1]],
+  [[1,0],[1,0],[1,1]],
+  [[0,1],[0,1],[1,1]],
+  [[1,1,1],[0,1,0]],
+  [[0,1,1],[1,1,0]],
+  [[1,1,0],[0,1,1]],
+  [[1,1],[1,0]],
+  [[1,1],[0,1]],
+  [[1,1,1,1]],
+  [[1],[1],[1],[1]],
+];
+
+// ═══════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════
+let grid, score, best, pieces, particles, flashCells;
+
+// drag state
+let drag = null;
+// drag = { idx, piece, fingerX, fingerY, boardRow, boardCol, valid }
+
+// ═══════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════
+function startGame() {
+  grid       = Array.from({length:ROWS}, () => Array(COLS).fill(0));
+  score      = 0;
+  best       = parseInt(localStorage.getItem('bb_best') || '0');
+  pieces     = [null, null, null];
+  particles  = [];
+  flashCells = [];
+  drag       = null;
+  dragCv.style.display = 'none';
+  document.getElementById('overlay').classList.remove('show');
+  dealPieces();
+  updateUI();
+  render();
+}
+
+// ═══════════════════════════════════════
+//  PIECES
+// ═══════════════════════════════════════
+function randPiece() {
+  return {
+    shape: SHAPES[Math.floor(Math.random() * SHAPES.length)],
+    color: 1 + Math.floor(Math.random() * (COLORS.length - 1)),
+  };
+}
+function dealPieces() {
+  for (let i = 0; i < 3; i++) if (!pieces[i]) pieces[i] = randPiece();
+  drawTray();
+}
+
+// ═══════════════════════════════════════
+//  DRAW HELPERS
+// ═══════════════════════════════════════
+function rr(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x+r,y); c.lineTo(x+w-r,y);
+  c.quadraticCurveTo(x+w,y,x+w,y+r);
+  c.lineTo(x+w,y+h-r);
+  c.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  c.lineTo(x+r,y+h);
+  c.quadraticCurveTo(x,y+h,x,y+h-r);
+  c.lineTo(x,y+r);
+  c.quadraticCurveTo(x,y,x+r,y);
+  c.closePath();
+}
+
+function drawCell(c, x, y, size, ci, alpha) {
+  if (alpha === undefined) alpha = 1;
+  const s = size - PAD;
+  c.globalAlpha = alpha;
+  // shadow
+  c.fillStyle = DARK[ci];
+  rr(c, x+PAD, y+PAD+s*.08, s, s, RAD); c.fill();
+  // fill
+  c.fillStyle = COLORS[ci];
+  rr(c, x+PAD, y+PAD, s, s, RAD); c.fill();
+  // shine
+  const g = c.createLinearGradient(x+PAD, y+PAD, x+PAD, y+PAD+s*.5);
+  g.addColorStop(0, LIGHT[ci]+'55'); g.addColorStop(1,'transparent');
+  c.fillStyle = g;
+  rr(c, x+PAD, y+PAD, s, s*.5, RAD); c.fill();
+  c.globalAlpha = 1;
+}
+
+// ═══════════════════════════════════════
+//  TRAY
+// ═══════════════════════════════════════
+const SLOT_SZ = 96;
+function drawTray() {
+  for (let i = 0; i < 3; i++) {
+    const pc = document.getElementById('p' + i);
+    const p  = pieces[i];
+    if (!p || (drag && drag.idx === i)) {
+      pc.width = 0; pc.height = 0;
+      document.getElementById('s'+i).style.opacity = (!p) ? '1' : '0.2';
+      continue;
+    }
+    document.getElementById('s'+i).style.opacity = '1';
+    const rows = p.shape.length, cols = p.shape[0].length;
+    const cs   = Math.min(18, Math.floor((SLOT_SZ - 8) / Math.max(rows, cols)));
+    const gap  = 2;
+    pc.width  = cols * (cs + gap);
+    pc.height = rows * (cs + gap);
+    const tc = pc.getContext('2d');
+    tc.clearRect(0, 0, pc.width, pc.height);
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++)
+        if (p.shape[r][c]) drawCell(tc, c*(cs+gap), r*(cs+gap), cs, p.color);
+  }
+}
+
+// ═══════════════════════════════════════
+//  DRAG CANVAS  (piece follows finger)
+// ═══════════════════════════════════════
+function updateDragCanvas() {
+  if (!drag) return;
+  const p    = drag.piece;
+  const rows = p.shape.length, cols = p.shape[0].length;
+  // use board cell size for dragging
+  dragCv.width  = cols * BS;
+  dragCv.height = rows * BS;
+  dragCtx.clearRect(0, 0, dragCv.width, dragCv.height);
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      if (p.shape[r][c]) drawCell(dragCtx, c*BS, r*BS, BS, p.color, 0.85);
+
+  // position: centered on finger, offset upward so finger can see board
+  const offsetX = dragCv.width  / 2;
+  const offsetY = dragCv.height + 30;
+  dragCv.style.left    = (drag.fingerX - offsetX) + 'px';
+  dragCv.style.top     = (drag.fingerY - offsetY) + 'px';
+  dragCv.style.display = 'block';
+}
+
+// ═══════════════════════════════════════
+//  BOARD RENDER
+// ═══════════════════════════════════════
+function render() {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+
+  // grid bg
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      ctx.fillStyle = (r+c)%2===0 ? '#16161e' : '#131319';
+      rr(ctx, c*BS+PAD, r*BS+PAD, BS-PAD*2, BS-PAD*2, RAD-2);
+      ctx.fill();
+    }
+
+  // hover preview
+  if (drag && drag.boardRow >= 0) {
+    const p = drag.piece;
+    const sr = drag.boardRow, sc = drag.boardCol;
+    const ok = canPlace(p, sr, sc);
+    const rows = p.shape.length, cols = p.shape[0].length;
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++) {
+        if (!p.shape[r][c]) continue;
+        const br = sr+r, bc = sc+c;
+        if (br<0||br>=ROWS||bc<0||bc>=COLS) continue;
+        ctx.fillStyle = ok ? COLORS[p.color]+'44' : '#ff000033';
+        rr(ctx, bc*BS+PAD, br*BS+PAD, BS-PAD*2, BS-PAD*2, RAD-2);
+        ctx.fill();
+      }
+  }
+
+  // placed cells
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      if (!grid[r][c]) continue;
+      const flash = flashCells.some(f => f.r===r && f.c===c);
+      drawCell(ctx, c*BS, r*BS, BS, grid[r][c], flash ? 0.25 : 1);
+    }
+
+  // particles
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle   = COLORS[p.color];
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r*p.life, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ═══════════════════════════════════════
+//  GAME LOGIC
+// ═══════════════════════════════════════
+function canPlace(p, sr, sc) {
+  const rows = p.shape.length, cols = p.shape[0].length;
+  if (sr < 0 || sc < 0 || sr+rows > ROWS || sc+cols > COLS) return false;
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      if (p.shape[r][c] && grid[sr+r][sc+c]) return false;
+  return true;
+}
+
+function placePiece(p, sr, sc) {
+  const rows = p.shape.length, cols = p.shape[0].length;
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      if (p.shape[r][c]) grid[sr+r][sc+c] = p.color;
+}
+
+function clearLines() {
+  const toClr = new Set();
+  for (let r = 0; r < ROWS; r++)
+    if (grid[r].every(v=>v)) for (let c=0;c<COLS;c++) toClr.add(r+','+c);
+  for (let c = 0; c < COLS; c++)
+    if (grid.every(row=>row[c])) for (let r=0;r<ROWS;r++) toClr.add(r+','+c);
+  if (!toClr.size) return 0;
+
+  flashCells = [...toClr].map(k => {
+    const [r,c] = k.split(',').map(Number);
+    spawnParticles(c*BS+BS/2, r*BS+BS/2, grid[r][c]);
+    return {r,c};
+  });
+  setTimeout(() => {
+    for (const k of toClr) { const [r,c]=k.split(',').map(Number); grid[r][c]=0; }
+    flashCells = [];
+  }, 220);
+
+  const rl = new Set([...toClr].map(k=>k.split(',')[0])).size;
+  const cl = new Set([...toClr].map(k=>k.split(',')[1])).size;
+  const lines = rl + cl;
+  if (lines >= 2) showCombo(lines);
+  return toClr.size * 10 + lines * lines * 20;
+}
+
+function spawnParticles(x, y, color) {
+  for (let i = 0; i < 12; i++) {
+    const a = Math.random()*Math.PI*2, sp = 1.5+Math.random()*3.5;
+    particles.push({x, y, color, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:3+Math.random()*5, life:1});
+  }
+}
+
+function showCombo(lines) {
+  const el = document.getElementById('combo');
+  const msgs = ['','','DOUBLE!','TRIPLE!','MEGA!!','ULTRA!!!'];
+  el.textContent = msgs[Math.min(lines,5)] || lines+'x COMBO!';
+  el.classList.add('show');
+  setTimeout(()=>el.classList.remove('show'), 900);
+}
+
+function updateUI() {
+  document.getElementById('sc').textContent = score;
+  document.getElementById('hi').textContent = best;
+}
+
+function checkGameOver() {
+  for (let i = 0; i < 3; i++) {
+    if (!pieces[i]) continue;
+    for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) if (canPlace(pieces[i],r,c)) return false;
+  }
+  return true;
+}
+
+function commitPlace() {
+  if (!drag) return;
+  const {idx, piece, boardRow, boardCol} = drag;
+  if (!canPlace(piece, boardRow, boardCol)) return false;
+
+  placePiece(piece, boardRow, boardCol);
+  pieces[idx] = null;
+  const pts = clearLines();
+  score += pts + piece.shape.flat().filter(Boolean).length * 2;
+  if (score > best) { best = score; localStorage.setItem('bb_best', best); }
+  updateUI();
+  if (pieces.every(p=>!p)) dealPieces(); else drawTray();
+  if (checkGameOver()) setTimeout(()=>{
+    document.getElementById('fscore').textContent = score;
+    document.getElementById('overlay').classList.add('show');
+  }, 400);
+  return true;
+}
+
+// ═══════════════════════════════════════
+//  DRAG  — finger coords → board cell
+// ═══════════════════════════════════════
+function fingerToBoard(fx, fy, piece) {
+  const rect = cv.getBoundingClientRect();
+  const bx   = fx - rect.left;
+  const by   = fy - rect.top - 30;  // offset upward (piece shown above finger)
+  const cols  = piece.shape[0].length;
+  const rows  = piece.shape.length;
+  // snap so piece is centered on finger
+  const sc = Math.round(bx / BS - cols / 2);
+  const sr = Math.round(by / BS - rows / 2);
+  return { sr, sc };
+}
+
+function startDrag(idx, fx, fy) {
+  if (!pieces[idx]) return;
+  drag = {
+    idx,
+    piece: pieces[idx],
+    fingerX: fx,
+    fingerY: fy,
+    boardRow: -1,
+    boardCol: -1,
+  };
+  drawTray();          // hide piece in slot while dragging
+  updateDragCanvas();
+  render();
+}
+
+function moveDrag(fx, fy) {
+  if (!drag) return;
+  drag.fingerX = fx;
+  drag.fingerY = fy;
+
+  const {sr, sc} = fingerToBoard(fx, fy, drag.piece);
+  drag.boardRow = sr;
+  drag.boardCol = sc;
+
+  updateDragCanvas();
+  render();
+}
+
+function endDrag(fx, fy) {
+  if (!drag) return;
+  drag.fingerX = fx;
+  drag.fingerY = fy;
+  const {sr, sc} = fingerToBoard(fx, fy, drag.piece);
+  drag.boardRow = sr;
+  drag.boardCol = sc;
+
+  const placed = commitPlace();
+  if (!placed) {
+    // snap back — piece stays in tray
+    drawTray();
+  }
+  drag = null;
+  dragCv.style.display = 'none';
+  render();
+}
+
+// ═══════════════════════════════════════
+//  EVENTS
+// ═══════════════════════════════════════
+
+// — Tray touch drag —
+for (let i = 0; i < 3; i++) {
+  const slot = document.getElementById('s' + i);
+
+  slot.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    startDrag(i, t.clientX, t.clientY);
+  }, {passive:false});
+
+  // mouse (desktop)
+  slot.addEventListener('mousedown', e => {
+    e.preventDefault();
+    startDrag(i, e.clientX, e.clientY);
+  });
+}
+
+// — Global move / end —
+document.addEventListener('touchmove', e => {
+  if (!drag) return;
+  e.preventDefault();
+  moveDrag(e.touches[0].clientX, e.touches[0].clientY);
+}, {passive:false});
+
+document.addEventListener('touchend', e => {
+  if (!drag) return;
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  endDrag(t.clientX, t.clientY);
+}, {passive:false});
+
+document.addEventListener('mousemove', e => {
+  if (!drag) return;
+  moveDrag(e.clientX, e.clientY);
+});
+
+document.addEventListener('mouseup', e => {
+  if (!drag) return;
+  endDrag(e.clientX, e.clientY);
+});
+
+// ═══════════════════════════════════════
+//  ANIMATION LOOP
+// ═══════════════════════════════════════
+function animate() {
+  let dirty = particles.length > 0 || flashCells.length > 0;
+  particles.forEach(p => { p.x+=p.vx; p.y+=p.vy; p.vy+=0.13; p.life-=0.03; });
+  particles = particles.filter(p => p.life > 0);
+  if (dirty) render();
+  requestAnimationFrame(animate);
+}
+
+// ═══════════════════════════════════════
+//  START
+// ═══════════════════════════════════════
+startGame();
+animate();
+</script>
+</body>
+</html>
