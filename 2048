@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>2048</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:     #0f0f14;
+  --panel:  #16161e;
+  --border: #22222e;
+  --text:   #e8e4dc;
+  --dim:    #5a5868;
+}
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body {
+  width:100%; height:100%; overflow:hidden;
+  background:var(--bg); color:var(--text);
+  font-family:'Nunito',sans-serif;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  touch-action:none; user-select:none;
+}
+
+/* ── TOP ── */
+#top {
+  width:100%; max-width:420px;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 16px 10px;
+}
+#title {
+  font-size:36px; font-weight:900; color:#f5a84a;
+  letter-spacing:-.02em; line-height:1;
+}
+#scores { display:flex; gap:8px; }
+.sbox {
+  background:var(--panel); border:1px solid var(--border);
+  border-radius:8px; padding:6px 14px;
+  display:flex; flex-direction:column; align-items:center;
+  min-width:64px;
+}
+.slabel { font-size:9px; font-weight:800; letter-spacing:.12em; color:var(--dim); }
+.sval   { font-size:18px; font-weight:900; color:var(--text); line-height:1.2; }
+
+/* ── BOARD ── */
+#board-wrap {
+  position:relative;
+  padding:10px;
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:14px;
+}
+#board {
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:8px;
+}
+.cell {
+  width:76px; height:76px;
+  border-radius:8px;
+  background:#22222e;
+  display:flex; align-items:center; justify-content:center;
+  font-size:22px; font-weight:900;
+  transition:none;
+  position:relative;
+  overflow:hidden;
+}
+@media(max-width:380px) {
+  .cell { width:68px; height:68px; font-size:20px; }
+}
+@media(max-width:340px) {
+  .cell { width:60px; height:60px; font-size:18px; }
+}
+
+/* tile colors */
+.t2    { background:#3a2e20; color:#f5d0a0; }
+.t4    { background:#4a3420; color:#f5c070; }
+.t8    { background:#c4732a; color:#fff8e0; }
+.t16   { background:#d4602a; color:#fff8e0; }
+.t32   { background:#e04020; color:#fff; }
+.t64   { background:#e02020; color:#fff; }
+.t128  { background:#c4a020; color:#fff; font-size:18px; }
+.t256  { background:#b8a010; color:#fff; font-size:18px; }
+.t512  { background:#a09010; color:#fff; font-size:18px; }
+.t1024 { background:#6090d0; color:#fff; font-size:15px; }
+.t2048 { background:#40b0e0; color:#fff; font-size:15px; }
+.thigh { background:#a040e0; color:#fff; font-size:13px; }
+
+/* pop animation on merge */
+@keyframes pop {
+  0%   { transform:scale(1); }
+  40%  { transform:scale(1.18); }
+  70%  { transform:scale(0.94); }
+  100% { transform:scale(1); }
+}
+@keyframes appear {
+  0%   { transform:scale(0); opacity:0; }
+  60%  { transform:scale(1.1); }
+  100% { transform:scale(1); opacity:1; }
+}
+.pop    { animation:pop    .18s ease; }
+.appear { animation:appear .15s ease; }
+
+/* ── BOTTOM HINT ── */
+#hint {
+  margin-top:12px;
+  font-size:11px; font-weight:700; color:var(--dim);
+  letter-spacing:.06em; text-align:center;
+}
+
+/* ── OVERLAY ── */
+#overlay {
+  display:none; position:absolute; inset:0;
+  border-radius:14px;
+  background:#0f0f14cc; backdrop-filter:blur(6px);
+  flex-direction:column; align-items:center; justify-content:center;
+  gap:10px; z-index:10;
+}
+#overlay.show { display:flex; }
+#ov-title { font-size:30px; font-weight:900; }
+#ov-score { font-size:18px; font-weight:800; color:#f5a84a; }
+#ov-btn {
+  background:#f5a84a; color:#0f0f14;
+  border:none; border-radius:10px;
+  font-family:inherit; font-size:14px; font-weight:900;
+  padding:12px 32px; cursor:pointer; margin-top:4px;
+}
+#ov-btn:active { background:#ffc060; }
+
+/* ── NEW GAME BTN ── */
+#newgame {
+  margin-top:12px;
+  background:var(--panel); border:1px solid var(--border);
+  color:var(--dim); border-radius:8px;
+  font-family:inherit; font-size:12px; font-weight:800;
+  padding:8px 22px; cursor:pointer; letter-spacing:.06em;
+  transition:border-color .12s, color .12s;
+}
+#newgame:hover { border-color:#f5a84a; color:#f5a84a; }
+
+/* score bump animation */
+@keyframes bump {
+  0%   { transform:scale(1); }
+  50%  { transform:scale(1.25); color:#f5a84a; }
+  100% { transform:scale(1); }
+}
+.bump { animation:bump .22s ease; }
+</style>
+</head>
+<body>
+
+<div id="top">
+  <div id="title">2048</div>
+  <div id="scores">
+    <div class="sbox">
+      <div class="slabel">SCORE</div>
+      <div class="sval" id="sc">0</div>
+    </div>
+    <div class="sbox">
+      <div class="slabel">BEST</div>
+      <div class="sval" id="hi">0</div>
+    </div>
+  </div>
+</div>
+
+<div id="board-wrap">
+  <div id="board"></div>
+  <div id="overlay">
+    <div id="ov-title"></div>
+    <div id="ov-score"></div>
+    <button id="ov-btn" onclick="startGame()">PLAY AGAIN</button>
+  </div>
+</div>
+
+<button id="newgame" onclick="startGame()">NEW GAME</button>
+<div id="hint">Swipe or use Arrow Keys to move tiles</div>
+
+<script>
+// ═══════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════
+let grid, score, best, moved, won;
+
+function startGame() {
+  grid  = Array.from({length:4}, ()=>Array(4).fill(0));
+  score = 0;
+  won   = false;
+  best  = parseInt(localStorage.getItem('2048_best')||'0');
+  document.getElementById('overlay').classList.remove('show');
+  addRandom(); addRandom();
+  render();
+}
+
+// ═══════════════════════════════════════════
+//  GRID LOGIC
+// ═══════════════════════════════════════════
+function addRandom() {
+  const empty = [];
+  for(let r=0;r<4;r++) for(let c=0;c<4;c++) if(!grid[r][c]) empty.push([r,c]);
+  if(!empty.length) return false;
+  const [r,c] = empty[Math.floor(Math.random()*empty.length)];
+  grid[r][c] = Math.random()<0.85 ? 2 : 4;
+  return {r,c};
+}
+
+function slideRow(row) {
+  // Remove zeros
+  let arr = row.filter(v=>v);
+  let pts = 0;
+  const merged = [];
+  // Merge
+  for(let i=0;i<arr.length;i++){
+    if(i+1<arr.length && arr[i]===arr[i+1]){
+      arr[i]*=2;
+      pts+=arr[i];
+      arr.splice(i+1,1);
+      merged.push(i);
+    }
+  }
+  // Pad
+  while(arr.length<4) arr.push(0);
+  return { arr, pts, merged };
+}
+
+function rotate90(g) {
+  // Rotate grid 90° clockwise
+  return g[0].map((_,i)=>g.map(row=>row[i]).reverse());
+}
+
+function move(dir) {
+  // dir: 0=left 1=right 2=up 3=down
+  let g = grid.map(r=>[...r]);
+  let pts = 0;
+  let didMove = false;
+  const mergedCells = [];
+
+  // Normalize: rotate so we always slide left
+  let rotations = 0;
+  if(dir===1) rotations=2;
+  if(dir===2) rotations=3;
+  if(dir===3) rotations=1;
+  for(let i=0;i<rotations;i++) g=rotate90(g);
+
+  for(let r=0;r<4;r++){
+    const old = [...g[r]];
+    const {arr,pts:p,merged} = slideRow(g[r]);
+    g[r] = arr;
+    pts+=p;
+    if(arr.join()!==old.join()) didMove=true;
+    // Track merged positions (in rotated space)
+    for(const mc of merged) mergedCells.push({r, c:mc});
+  }
+
+  // Rotate back
+  const backRot = (4-rotations)%4;
+  for(let i=0;i<backRot;i++) g=rotate90(g);
+
+  if(!didMove) return false;
+
+  grid = g;
+  score += pts;
+  if(score>best){ best=score; localStorage.setItem('2048_best',best); }
+  return true;
+}
+
+function hasWon()  { return grid.flat().includes(2048); }
+function hasLost() {
+  if(grid.flat().includes(0)) return false;
+  for(let r=0;r<4;r++) for(let c=0;c<4;c++){
+    if(r<3 && grid[r][c]===grid[r+1][c]) return false;
+    if(c<3 && grid[r][c]===grid[r][c+1]) return false;
+  }
+  return true;
+}
+
+// ═══════════════════════════════════════════
+//  RENDER
+// ═══════════════════════════════════════════
+let prevGrid = Array.from({length:4},()=>Array(4).fill(0));
+
+function tileClass(v) {
+  if(!v) return '';
+  if(v===2)    return 't2';
+  if(v===4)    return 't4';
+  if(v===8)    return 't8';
+  if(v===16)   return 't16';
+  if(v===32)   return 't32';
+  if(v===64)   return 't64';
+  if(v===128)  return 't128';
+  if(v===256)  return 't256';
+  if(v===512)  return 't512';
+  if(v===1024) return 't1024';
+  if(v===2048) return 't2048';
+  return 'thigh';
+}
+
+function render(newCell, mergedCells) {
+  const board = document.getElementById('board');
+  const cells = board.querySelectorAll('.cell');
+
+  for(let r=0;r<4;r++) for(let c=0;c<4;c++){
+    const v = grid[r][c];
+    const idx = r*4+c;
+    const cell = cells[idx];
+    const prev = prevGrid[r][c];
+
+    // Remove old tile classes
+    cell.className = 'cell';
+    if(v) cell.classList.add(tileClass(v));
+    cell.textContent = v || '';
+
+    // Animate: new tile appeared
+    if(newCell && newCell.r===r && newCell.c===c) {
+      cell.classList.add('appear');
+      cell.addEventListener('animationend',()=>cell.classList.remove('appear'),{once:true});
+    }
+
+    // Animate: merged
+    if(v && v!==prev && v===prev*2) {
+      cell.classList.add('pop');
+      cell.addEventListener('animationend',()=>cell.classList.remove('pop'),{once:true});
+    }
+  }
+
+  prevGrid = grid.map(r=>[...r]);
+
+  // Score
+  document.getElementById('sc').textContent = score;
+  document.getElementById('hi').textContent = best;
+
+  // Win / lose
+  if(!won && hasWon()) {
+    won = true;
+    setTimeout(()=>showOverlay('🎉 YOU WIN!', score), 400);
+  } else if(hasLost()) {
+    setTimeout(()=>showOverlay('GAME OVER', score), 400);
+  }
+}
+
+function buildBoard() {
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+  for(let i=0;i<16;i++){
+    const c = document.createElement('div');
+    c.className='cell'; board.appendChild(c);
+  }
+}
+
+function showOverlay(title, s) {
+  document.getElementById('ov-title').textContent = title;
+  document.getElementById('ov-score').textContent = 'Score: ' + s;
+  document.getElementById('overlay').classList.add('show');
+}
+
+// Score bump animation
+function bumpScore() {
+  const el = document.getElementById('sc');
+  el.classList.remove('bump');
+  void el.offsetWidth;
+  el.classList.add('bump');
+  el.addEventListener('animationend',()=>el.classList.remove('bump'),{once:true});
+}
+
+// ═══════════════════════════════════════════
+//  INPUT
+// ═══════════════════════════════════════════
+function doMove(dir) {
+  const prevScore = score;
+  const didMove = move(dir);
+  if(!didMove) return;
+  const nc = addRandom();
+  render(nc || null);
+  if(score > prevScore) bumpScore();
+}
+
+// Keyboard
+document.addEventListener('keydown', e=>{
+  const map = {'ArrowLeft':0,'ArrowRight':1,'ArrowUp':2,'ArrowDown':3};
+  if(map[e.key]!==undefined){ e.preventDefault(); doMove(map[e.key]); }
+});
+
+// Touch swipe
+let tx=0, ty=0;
+document.addEventListener('touchstart', e=>{
+  tx=e.touches[0].clientX; ty=e.touches[0].clientY;
+},{passive:true});
+document.addEventListener('touchend', e=>{
+  const dx=e.changedTouches[0].clientX-tx;
+  const dy=e.changedTouches[0].clientY-ty;
+  if(Math.abs(dx)<20 && Math.abs(dy)<20) return;
+  if(Math.abs(dx)>Math.abs(dy)) doMove(dx<0?0:1);
+  else doMove(dy<0?2:3);
+},{passive:true});
+
+// ═══════════════════════════════════════════
+//  START
+// ═══════════════════════════════════════════
+buildBoard();
+startGame();
+</script>
+</body>
+</html>
